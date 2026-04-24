@@ -1,0 +1,26 @@
+# ~/.standup/config.yaml — copy and edit
+# Most fields can be overridden by environment variables, e.g. OPENAI_API_KEY, GITHUB_TOKEN.
+
+author: "your-git-name"          # filters git commits by this author (use `git config user.name`)
+since: 12h                       # time window: 12h, 24h, 48h
+
+scan_dirs:                       # directories to scan one level deep for git repos
+  - ~/projects
+  - ~/work
+
+github:
+  token: ""                      # PAT with repo scope, or set GITHUB_TOKEN env var
+  repos:                         # repos to fetch PRs from
+    - owner/repo-one
+    - owner/repo-two
+
+openai:
+  api_key: ""                    # or set OPENAI_API_KEY env var
+  model: gpt-4o                  # gpt-4o | gpt-4o-mini
+  max_tokens: 500
+
+slack:
+  webhook_url: ""                # https://hooks.slack.com/services/...
+  channel: "#standup"
+
+format: markdown                 # markdown | plain | slack
