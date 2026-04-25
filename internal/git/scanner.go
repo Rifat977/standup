@@ -3,6 +3,7 @@ package git
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,9 +71,14 @@ func repoLog(repoPath string, cfg *config.Config) ([]Commit, error) {
 	}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	logx.Debug("git: %s $ git %s", repoPath, strings.Join(args, " "))
 	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%v: %s", err, msg)
+		}
 		return nil, err
 	}
 	repoName := filepath.Base(repoPath)
