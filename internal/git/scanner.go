@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rifat977/standup/internal/config"
+	"github.com/rifat977/standup/internal/logx"
 )
 
 // Commit is a single git commit parsed from `git log`.
@@ -24,11 +25,17 @@ type Commit struct {
 // repo, and returns flattened commits. Errors in individual repos are skipped.
 func Collect(cfg *config.Config) ([]Commit, error) {
 	var out []Commit
+	if len(cfg.ScanDirs) == 0 {
+		logx.Warn("git: no scan_dirs configured")
+		return nil, nil
+	}
 	for _, dir := range cfg.ScanDirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
+			logx.Warn("git: cannot read scan_dir %q: %v", dir, err)
 			continue
 		}
+		repoCount := 0
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
@@ -37,13 +44,18 @@ func Collect(cfg *config.Config) ([]Commit, error) {
 			if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
 				continue
 			}
+			repoCount++
 			commits, err := repoLog(repoPath, cfg)
 			if err != nil {
+				logx.Warn("git: log failed for %s: %v", repoPath, err)
 				continue
 			}
+			logx.Debug("git: %s yielded %d commit(s)", filepath.Base(repoPath), len(commits))
 			out = append(out, commits...)
 		}
+		logx.Info("git: scanned %s (%d repos)", dir, repoCount)
 	}
+	logx.Info("git: collected %d commit(s) total", len(out))
 	return out, nil
 }
 
