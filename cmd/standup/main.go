@@ -85,7 +85,7 @@ func initLogger() {
 	}
 }
 
-func loadConfig() (*config.Config, error) {
+func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -93,17 +93,20 @@ func loadConfig() (*config.Config, error) {
 	if flagSince != "" {
 		cfg.Since = flagSince
 	}
-	if flagAuthor != "" {
+	// Use Changed() so `--author ""` explicitly clears the filter for debugging.
+	if cmd.Flags().Changed("author") {
 		cfg.Author = flagAuthor
 	}
 	if flagModel != "" {
 		cfg.OpenAI.Model = flagModel
 	}
+	logx.Info("config: author=%q since=%q scan_dirs=%d repos=%d model=%s",
+		cfg.Author, cfg.Since, len(cfg.ScanDirs), len(cfg.GitHub.Repos), cfg.OpenAI.Model)
 	return cfg, nil
 }
 
 func runTUI(cmd *cobra.Command, args []string) error {
-	cfg, err := loadConfig()
+	cfg, err := loadConfig(cmd)
 	if err != nil {
 		return err
 	}
@@ -115,7 +118,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 }
 
 func runShow(cmd *cobra.Command, args []string) error {
-	cfg, err := loadConfig()
+	cfg, err := loadConfig(cmd)
 	if err != nil {
 		return err
 	}
