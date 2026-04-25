@@ -14,15 +14,17 @@ import (
 	"github.com/rifat977/standup/internal/formatter"
 	gitscan "github.com/rifat977/standup/internal/git"
 	ghclient "github.com/rifat977/standup/internal/github"
+	"github.com/rifat977/standup/internal/logx"
 	"github.com/rifat977/standup/internal/ui"
 )
 
 var (
-	flagSince  string
-	flagAuthor string
-	flagModel  string
-	flagNoAI   bool
-	flagPlain  bool
+	flagSince   string
+	flagAuthor  string
+	flagModel   string
+	flagNoAI    bool
+	flagPlain   bool
+	flagVerbose bool
 )
 
 func main() {
@@ -36,6 +38,9 @@ func main() {
 	root.PersistentFlags().StringVar(&flagModel, "model", "", "OpenAI model (overrides config)")
 	root.PersistentFlags().BoolVar(&flagNoAI, "no-ai", false, "skip AI summary")
 	root.PersistentFlags().BoolVar(&flagPlain, "plain", false, "plain-text output (for piping)")
+	root.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "tee logs to stderr (debug level)")
+
+	cobra.OnInitialize(initLogger)
 
 	root.AddCommand(&cobra.Command{
 		Use:   "init",
@@ -61,8 +66,22 @@ func main() {
 	})
 
 	if err := root.Execute(); err != nil {
+		logx.Error("command failed: %v", err)
 		fmt.Fprintln(os.Stderr, "error:", err)
+		logx.Close()
 		os.Exit(1)
+	}
+	logx.Close()
+}
+
+func initLogger() {
+	dir, err := config.Dir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warn: cannot determine config dir:", err)
+		return
+	}
+	if err := logx.Init(dir, flagVerbose); err != nil {
+		fmt.Fprintln(os.Stderr, "warn: cannot open log file:", err)
 	}
 }
 
