@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rifat977/standup/internal/ai"
 )
@@ -136,7 +137,7 @@ func (m SummaryModel) View() string {
 		return b.String()
 	}
 
-	b.WriteString(primary.Render(m.summary))
+	b.WriteString(renderStandupBody(m.summary, m.width))
 	b.WriteString("\n\n")
 	if m.streaming {
 		b.WriteString(mutedStyle.Render(m.spin.View() + " streaming..."))
@@ -146,6 +147,127 @@ func (m SummaryModel) View() string {
 	b.WriteString(mutedStyle.Render("        tokens: ") + primary.Render(itoa(m.tokens)))
 	return b.String()
 }
+
+// Section styles — lipgloss handles wrapping (via Width) and indentation
+// (via PaddingLeft / MarginLeft), so we never hand-pad strings.
+var (
+	sectionWidth = func(viewWidth int) int {
+		w := viewWidth - 4
+		if w < 40 {
+			return 60
+		}
+		return w
+	}
+
+	headerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent).
+			MarginTop(1)
+
+	bodyStyle = lipgloss.NewStyle().
+			Foreground(colorPrimary).
+			PaddingLeft(3)
+
+	bulletStyle = lipgloss.NewStyle().
+			Foreground(colorPrimary).
+			PaddingLeft(3)
+
+	bulletMarker = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			SetString("•")
+)
+
+type section struct {
+	title string
+	body  []string // freeform paragraphs
+	bul   []string // bullet items
+}
+
+// renderStandupBody composes the AI output into vertically-joined lipgloss
+// blocks: a colored header per section, then either a wrapped paragraph block
+// or a bulleted list. lipgloss does the wrapping via Width().
+func renderStandupBody(s string, viewWidth int) string {
+	w := sectionWidth(viewWidth)
+	sections := parseSections(s)
+
+	icons := map[string]string{
+		"Yesterday": "✓",
+		"Today":     "▸",
+		"Blockers":  "⚠",
+	}
+
+	var blocks []string
+	for _, sec := range sections {
+		if sec.title != "" {
+			icon := icons[sec.title]
+			if icon == "" {
+				icon = "•"
+			}
+			blocks = append(blocks, headerStyle.Render(icon+"  "+sec.title))
+		}
+		if len(sec.body) > 0 {
+			text := strings.Join(sec.body, " ")
+			blocks = append(blocks, bodyStyle.Width(w).Render(text))
+		}
+		for _, item := range sec.bul {
+			marker := bulletMarker.String() + " "
+			blocks = append(blocks, bulletStyle.Width(w).Render(marker+item))
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
+}
+
+// parseSections groups lines under their nearest section heading. Bullet
+// lines are kept separate so they can be styled individually.
+func parseSections(s string) []section {
+	var out []section
+	cur := -1
+	flush := func() { /* no-op; kept for symmetry */ }
+
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimSpace(stripBold(raw))
+		if line == "" {
+			continue
+		}
+		if title, ok := matchHeader(line); ok {
+			out = append(out, section{title: title})
+			cur = len(out) - 1
+			continue
+		}
+		if cur < 0 {
+			out = append(out, section{})
+			cur = 0
+		}
+		if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+			out[cur].bul = append(out[cur].bul, strings.TrimSpace(line[2:]))
+		} else {
+			out[cur].body = append(out[cur].body, line)
+		}
+	}
+	flush()
+	return out
+}
+
+// matchHeader returns (canonicalTitle, true) for a recognised section header.
+// Accepts variants like "Yesterday", "Yesterday:", "## Yesterday".
+func matchHeader(line string) (string, bool) {
+	clean := stripBold(line)
+	clean = strings.TrimPrefix(clean, "## ")
+	clean = strings.TrimPrefix(clean, "# ")
+	clean = strings.TrimSuffix(clean, ":")
+	clean = strings.TrimSpace(clean)
+	switch strings.ToLower(clean) {
+	case "yesterday":
+		return "Yesterday", true
+	case "today":
+		return "Today", true
+	case "blockers", "blocker":
+		return "Blockers", true
+	}
+	return "", false
+}
+
+func stripBold(s string) string { return strings.ReplaceAll(s, "**", "") }
 
 func itoa(n int) string {
 	if n == 0 {
