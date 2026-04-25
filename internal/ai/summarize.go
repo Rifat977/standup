@@ -12,6 +12,7 @@ import (
 	"github.com/rifat977/standup/internal/config"
 	gitscan "github.com/rifat977/standup/internal/git"
 	ghclient "github.com/rifat977/standup/internal/github"
+	"github.com/rifat977/standup/internal/logx"
 )
 
 // Data is the input bundle handed to the AI.
@@ -75,8 +76,10 @@ func buildMessages(d Data) []openai.ChatCompletionMessage {
 // Summarize calls OpenAI synchronously and returns the full response.
 func Summarize(ctx context.Context, cfg *config.Config, d Data) (string, error) {
 	if cfg.OpenAI.APIKey == "" {
+		logx.Error("ai: openai api key not set")
 		return "", errors.New("openai api key not set (config or OPENAI_API_KEY)")
 	}
+	logx.Info("ai: summarize model=%s commits=%d prs=%d", cfg.OpenAI.Model, len(d.Commits), len(d.PRs))
 	client := openai.NewClient(cfg.OpenAI.APIKey)
 	resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:     cfg.OpenAI.Model,
@@ -84,6 +87,7 @@ func Summarize(ctx context.Context, cfg *config.Config, d Data) (string, error) 
 		Messages:  buildMessages(d),
 	})
 	if err != nil {
+		logx.Error("ai: chat completion failed: %v", err)
 		return "", err
 	}
 	if len(resp.Choices) == 0 {
@@ -104,9 +108,11 @@ type DoneMsg struct{ Err error }
 func Stream(ctx context.Context, cfg *config.Config, d Data, out chan<- any) {
 	defer close(out)
 	if cfg.OpenAI.APIKey == "" {
+		logx.Error("ai: stream — openai api key not set")
 		out <- DoneMsg{Err: errors.New("openai api key not set")}
 		return
 	}
+	logx.Info("ai: stream begin model=%s commits=%d prs=%d", cfg.OpenAI.Model, len(d.Commits), len(d.PRs))
 	client := openai.NewClient(cfg.OpenAI.APIKey)
 	stream, err := client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
 		Model:     cfg.OpenAI.Model,
@@ -115,6 +121,7 @@ func Stream(ctx context.Context, cfg *config.Config, d Data, out chan<- any) {
 		Stream:    true,
 	})
 	if err != nil {
+		logx.Error("ai: stream open failed: %v", err)
 		out <- DoneMsg{Err: err}
 		return
 	}
@@ -122,10 +129,12 @@ func Stream(ctx context.Context, cfg *config.Config, d Data, out chan<- any) {
 	for {
 		resp, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
+			logx.Info("ai: stream complete")
 			out <- DoneMsg{}
 			return
 		}
 		if err != nil {
+			logx.Error("ai: stream recv failed: %v", err)
 			out <- DoneMsg{Err: err}
 			return
 		}

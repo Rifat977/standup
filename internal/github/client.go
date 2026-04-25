@@ -10,6 +10,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/rifat977/standup/internal/config"
+	"github.com/rifat977/standup/internal/logx"
 )
 
 // PR is the minimal PR record we display and pass to the AI.
@@ -26,11 +27,17 @@ type PR struct {
 
 // Collect fetches PRs updated within cfg.Since across all configured repos.
 func Collect(ctx context.Context, cfg *config.Config) ([]PR, error) {
-	if cfg.GitHub.Token == "" || len(cfg.GitHub.Repos) == 0 {
+	if cfg.GitHub.Token == "" {
+		logx.Warn("github: token not set — skipping PR fetch (set github.token or GITHUB_TOKEN)")
+		return nil, nil
+	}
+	if len(cfg.GitHub.Repos) == 0 {
+		logx.Warn("github: no repos configured — skipping PR fetch")
 		return nil, nil
 	}
 	since, err := time.ParseDuration(cfg.Since)
 	if err != nil {
+		logx.Warn("github: invalid since=%q (%v); falling back to 12h", cfg.Since, err)
 		since = 12 * time.Hour
 	}
 	cutoff := time.Now().Add(-since)
@@ -43,6 +50,7 @@ func Collect(ctx context.Context, cfg *config.Config) ([]PR, error) {
 	for _, slug := range cfg.GitHub.Repos {
 		owner, repo, ok := splitSlug(slug)
 		if !ok {
+			logx.Warn("github: invalid repo slug %q (expected owner/repo)", slug)
 			continue
 		}
 		opts := &gh.PullRequestListOptions{
@@ -51,10 +59,16 @@ func Collect(ctx context.Context, cfg *config.Config) ([]PR, error) {
 			Direction:   "desc",
 			ListOptions: gh.ListOptions{PerPage: 50},
 		}
-		prs, _, err := client.PullRequests.List(ctx, owner, repo, opts)
+		prs, resp, err := client.PullRequests.List(ctx, owner, repo, opts)
 		if err != nil {
+			status := ""
+			if resp != nil {
+				status = resp.Status
+			}
+			logx.Warn("github: list PRs %s/%s failed (%s): %v", owner, repo, status, err)
 			continue
 		}
+		matched := 0
 		for _, p := range prs {
 			updated := p.GetUpdatedAt().Time
 			if updated.Before(cutoff) {
@@ -70,8 +84,11 @@ func Collect(ctx context.Context, cfg *config.Config) ([]PR, error) {
 				CI:        ciState(ctx, client, owner, repo, p.GetHead().GetSHA()),
 				UpdatedAt: updated,
 			})
+			matched++
 		}
+		logx.Info("github: %s/%s — %d PR(s) within last %s", owner, repo, matched, since)
 	}
+	logx.Info("github: collected %d PR(s) total", len(out))
 	return out, nil
 }
 
@@ -92,7 +109,11 @@ func prState(p *gh.PullRequest) string {
 
 func reviewState(ctx context.Context, c *gh.Client, owner, repo string, num int) string {
 	revs, _, err := c.PullRequests.ListReviews(ctx, owner, repo, num, &gh.ListOptions{PerPage: 50})
-	if err != nil || len(revs) == 0 {
+	if err != nil {
+		logx.Debug("github: list reviews %s/%s#%d failed: %v", owner, repo, num, err)
+		return "pending"
+	}
+	if len(revs) == 0 {
 		return "pending"
 	}
 	// last non-comment review wins
@@ -113,7 +134,11 @@ func ciState(ctx context.Context, c *gh.Client, owner, repo, sha string) string 
 		return "pending"
 	}
 	checks, _, err := c.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, &gh.ListCheckRunsOptions{})
-	if err != nil || checks.GetTotal() == 0 {
+	if err != nil {
+		logx.Debug("github: list checks %s/%s sha=%s failed: %v", owner, repo, sha, err)
+		return "pending"
+	}
+	if checks.GetTotal() == 0 {
 		return "pending"
 	}
 	worst := "pass"
